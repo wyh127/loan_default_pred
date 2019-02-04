@@ -1,0 +1,116 @@
+---
+title: "loan_pred"
+author: "Yuhao Wang"
+date: "1/16/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library("InformationValue")
+library(glmnet)
+```
+
+# data pre-processing
+```{r}
+raw <- read.csv("LoanStats_2018Q3.csv", as.is = T)
+
+na <- apply(raw, 2, function(x) sum(is.na(x)))
+na_perc <- na / nrow(raw)
+
+# na_sort <- sort(na_perc, decreasing = T)
+# plot(sort(na_perc, decreasing = T))
+
+na_ind <- na_perc < 0.5
+raw1 <- raw[na_ind]
+
+ind <- raw1["loan_status"] == "Fully Paid" | raw1["loan_status"] == "Charged Off"
+raw2 <- raw1[ind, ]
+raw2 <- raw2[-1]
+
+raw3 <- as_tibble(raw2)
+
+cla <- raw3 %>% summarise_all(class) %>% gather(variable, class)
+f_ind <- cla$class == "character"
+
+raw3_fac <- raw3[f_ind]
+raw3_num <- raw3[!f_ind]
+
+# data imputation with mean
+raw3_num <- apply(raw3_num, 2, function(x) x <- ifelse(is.na(x), mean(x, na.rm = T), x))
+# remove constant variable
+raw3_num <- raw3_num[, !apply(raw3_num, 2, sum) == 0]
+raw3_num <- raw3_num[, !apply(raw3_num, 2, function(x) max(x) == min(x))]
+# normalise
+raw3_num <- apply(raw3_num, 2, function(x) return(x / max(x)))
+
+X1 <- raw3_num
+X2 <- raw3_fac[-10]
+y <- ifelse(raw3_fac$loan_status == "Charged Off", 1, 0)
+
+charged_ind <- y == 1
+paid_ind <- !charged_ind
+```
+
+# PCA
+```{r}
+# using oversampling method to deal with imbalance data
+os_ind <- sample(1:110, size = 2200, replace = T)
+
+X_data <- rbind(X1[paid_ind, ], X1[charged_ind, ][os_ind, ])
+y_data <- c(y[paid_ind], y[charged_ind][os_ind])
+
+pca_prcomp <- prcomp(X_data, scale. = TRUE)
+pcs <- pca_prcomp$x
+ev <- pca_prcomp$sdev ** 2
+
+ev_perc <- cumsum(ev) / sum(ev)
+
+# choose the first 13 pc
+X_pc <- pcs[, 1:13]
+```
+
+# logistic regression and model evaluation
+```{r}
+# using oversampling method to deal with imbalance data
+os_ind <- sample(1:110, size = 2200, replace = T)
+
+X_data <- rbind(X1[paid_ind, ], X1[charged_ind, ][os_ind, ])
+y_data <- c(y[paid_ind], y[charged_ind][os_ind])
+
+test_ind <- sample(1:6986, size = 2000)
+train_X <- X_data[-test_ind, ]
+test_X <- X_data[test_ind, ]
+train_y <- y_data[-test_ind]
+test_y <- y_data[test_ind]
+
+cv.lasso <- cv.glmnet(train_X, train_y, alpha = 1, family = "binomial")
+model <- glmnet(train_X, train_y, alpha = 1, family = "binomial", lambda = cv.lasso$lambda.min)
+
+probabilities <- model %>% predict(newx = test_X)
+probabilities <- (probabilities - min(probabilities)) / (max(probabilities)-min(probabilities))
+
+predicted <- ifelse(probabilities > 0.4, 1, 0)
+# ROC and AUC
+plotROC(test_y, predicted)
+
+
+
+# logitMod <- glm(y_data ~ X_pc, family=binomial(link="logit"))
+
+# predicted <- plogis(predict(logitMod, as.data.frame(X_pc)))
+
+
+
+# sum(ifelse(predicted < 0.2, 0, 1))
+# accuracy
+sum(ifelse(predicted < 0.4, 0, 1) == test_y) / length(test_y)
+
+# F1
+sen <- sensitivity(test_y, predicted, threshold = 0.3)
+spe <- specificity(test_y, predicted, threshold = 0.3)
+f1 <- 1/((1/spe+1/sen)/2)
+```
+
