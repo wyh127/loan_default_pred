@@ -87,30 +87,34 @@ train_y <- y_data[-test_ind]
 test_y <- y_data[test_ind]
 
 cv.lasso <- cv.glmnet(train_X, train_y, alpha = 1, family = "binomial")
-model <- glmnet(train_X, train_y, alpha = 1, family = "binomial", lambda = cv.lasso$lambda.min)
+#model <- glmnet(train_X, train_y, alpha = 1, family = "binomial", lambda = cv.lasso$lambda.min)
+model <- glmnet(train_X, train_y, alpha = 1, family = "binomial", lambda = 0.12)
 
 probabilities <- model %>% predict(newx = test_X)
-probabilities <- (probabilities - min(probabilities)) / (max(probabilities)-min(probabilities))
+probabilities <- exp(0.01*probabilities) / (1+exp(0.01*probabilities))
+plotROC(test_y, probabilities)
 
-predicted <- ifelse(probabilities > 0.4, 1, 0)
+# probabilities <- exp(probabilities) / sum(exp(probabilities))
+
+#probabilities <- probabilities / sum(probabilities)
+
+predicted <- ifelse(probabilities > 0.5, 1, 0)
+# accuracy
+sum(ifelse(predicted < 0.4, 0, 1) == test_y) / length(test_y)
+
 # ROC and AUC
-plotROC(test_y, predicted)
-
-
+plotROC(test_y, probabilities)
 
 # logitMod <- glm(y_data ~ X_pc, family=binomial(link="logit"))
 
 # predicted <- plogis(predict(logitMod, as.data.frame(X_pc)))
 
-
-
 # sum(ifelse(predicted < 0.2, 0, 1))
-# accuracy
-sum(ifelse(predicted < 0.4, 0, 1) == test_y) / length(test_y)
 
 # F1
 sen <- sensitivity(test_y, predicted, threshold = 0.3)
 spe <- specificity(test_y, predicted, threshold = 0.3)
 f1 <- 1/((1/spe+1/sen)/2)
 ```
+
 
